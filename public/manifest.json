@@ -5,7 +5,9 @@
   "description": "Save LinkedIn profiles to Airtable",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "tabs",
+    "sidePanel"
   ],
   "host_permissions": [
     "*://*.linkedin.com/*",
@@ -16,17 +18,19 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.linkedin.com/in/*"],
+      "matches": ["*://*.linkedin.com/in/*", "*://*.linkedin.com/company/*"],
       "js": ["content.js"]
     }
   ],
   "action": {
-    "default_popup": "src/popup/index.html",
     "default_icon": {
       "16": "icon16.png",
       "48": "icon48.png",
       "128": "icon128.png"
     }
+  },
+  "side_panel": {
+    "default_path": "src/popup/index.html"
   },
   "options_page": "src/options/index.html",
   "icons": {

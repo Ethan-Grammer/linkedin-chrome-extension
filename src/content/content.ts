@@ -9,6 +9,13 @@ interface ProfileData {
   email: string;
   connectionRequestSent: boolean;  // LI Connection Request?
   connected: boolean;               // Connected?
+  companyLinkedInUrl?: string;      // Company LinkedIn URL for brand extraction
+}
+
+interface BrandData {
+  brandName: string;
+  brandWebsite: string;
+  location: string;
 }
 
 /**
@@ -46,6 +53,76 @@ function waitForElement(selector: string, timeout = 10000): Promise<Element | nu
 }
 
 /**
+ * Extracts brand data from a LinkedIn company page
+ */
+function extractBrandData(): BrandData {
+  const brandData: BrandData = {
+    brandName: '',
+    brandWebsite: '',
+    location: 'LinkedIn',
+  };
+
+  try {
+    console.log('=== Starting brand data extraction ===');
+
+    // Extract Brand Name from h1
+    const h1Elements = Array.from(document.querySelectorAll('h1'));
+    const nameElement = h1Elements.find(el => {
+      const text = el.textContent?.trim() || '';
+      return text.length > 0 && text.length < 100;
+    });
+
+    if (nameElement) {
+      brandData.brandName = nameElement.textContent?.trim() || '';
+      console.log('✓ Brand name extracted:', brandData.brandName);
+    }
+
+    // Extract Brand Website - look for website link
+    // LinkedIn company pages have a "Website" section with an external link
+    const allLinks = Array.from(document.querySelectorAll('a[href]'));
+
+    // Find links that are external (not linkedin.com) and look like company websites
+    const websiteLink = allLinks.find(link => {
+      const href = (link as HTMLAnchorElement).href;
+      const text = link.textContent?.toLowerCase() || '';
+
+      // Skip LinkedIn URLs
+      if (href.includes('linkedin.com')) return false;
+
+      // Look for common website patterns or "Website" label
+      return text.includes('website') ||
+             href.match(/^https?:\/\/(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/);
+    });
+
+    if (websiteLink) {
+      brandData.brandWebsite = (websiteLink as HTMLAnchorElement).href;
+      console.log('✓ Brand website extracted:', brandData.brandWebsite);
+    } else {
+      // Alternative: look for links in the "About" section
+      const aboutSection = document.querySelector('[class*="about"]');
+      if (aboutSection) {
+        const aboutLinks = Array.from(aboutSection.querySelectorAll('a[href]'));
+        const externalLink = aboutLinks.find(link => {
+          const href = (link as HTMLAnchorElement).href;
+          return href && !href.includes('linkedin.com');
+        });
+
+        if (externalLink) {
+          brandData.brandWebsite = (externalLink as HTMLAnchorElement).href;
+          console.log('✓ Brand website extracted from About:', brandData.brandWebsite);
+        }
+      }
+    }
+
+    console.log('Extracted brand data:', brandData);
+  } catch (error) {
+    console.error('Error extracting brand data:', error);
+  }
+
+  return brandData;
+}
+
+/**
  * Extracts connection status from the profile page
  */
 function extractConnectionStatus(): { connected: boolean; connectionRequestSent: boolean } {
@@ -57,49 +134,108 @@ function extractConnectionStatus(): { connected: boolean; connectionRequestSent:
   try {
     console.log('=== Extracting connection status ===');
 
-    // Look for all buttons on the page
-    const buttons = Array.from(document.querySelectorAll('button'));
+    // First, check for "1st" connection badge in the profile header
+    const profileHeader = document.querySelector('main, [data-view-name*="profile"]');
+    if (profileHeader) {
+      const headerText = profileHeader.textContent || '';
 
-    // Check for "Pending" button (connection request sent)
-    const pendingButton = buttons.find(button => {
+      // Look for various "1st" connection indicators
+      const connectionIndicators = [
+        '1st degree connection',
+        '• 1st',
+        '1st',
+        'Connected'
+      ];
+
+      const hasConnectionIndicator = connectionIndicators.some(indicator =>
+        headerText.includes(indicator)
+      );
+
+      console.log('Profile header text (first 500 chars):', headerText.substring(0, 500));
+      console.log('Checking for connection indicators:', connectionIndicators);
+
+      if (hasConnectionIndicator) {
+        console.log('✓ Found connection indicator in profile header - already connected');
+        status.connected = true;
+        status.connectionRequestSent = true;
+        return status;
+      }
+    }
+
+    // Look for buttons in the profile header specifically
+    const profileButtons = profileHeader ?
+      Array.from(profileHeader.querySelectorAll('button')) :
+      Array.from(document.querySelectorAll('button'));
+
+    // Debug: Log profile action buttons (looking for Message, Connect, Pending)
+    console.log('Profile action buttons:');
+    profileButtons.forEach(button => {
+      const text = button.textContent?.trim() || '';
       const ariaLabel = button.getAttribute('aria-label') || '';
-      return ariaLabel.toLowerCase().includes('pending');
+
+      // Only log buttons that might be action buttons
+      if (text.length < 50 && (
+        text.toLowerCase().includes('message') ||
+        text.toLowerCase().includes('connect') ||
+        text.toLowerCase().includes('pending') ||
+        ariaLabel.toLowerCase().includes('message') ||
+        ariaLabel.toLowerCase().includes('connect') ||
+        ariaLabel.toLowerCase().includes('pending')
+      )) {
+        console.log(`  - Text: "${text}", Aria-label: "${ariaLabel}"`);
+      }
+    });
+
+    // Check for "Pending" button (connection request sent but not accepted)
+    const pendingButton = profileButtons.find(button => {
+      const ariaLabel = button.getAttribute('aria-label') || '';
+      const text = button.textContent?.trim().toLowerCase() || '';
+      return ariaLabel.toLowerCase().includes('pending') || text.includes('pending');
     });
 
     if (pendingButton) {
-      console.log('✓ Connection request is pending');
+      console.log('✓ Connection request is pending (not yet accepted)');
       status.connectionRequestSent = true;
+      status.connected = false;
       return status;
     }
 
     // Check for "Message" button (already connected)
-    const messageButton = buttons.find(button => {
+    const messageButton = profileButtons.find(button => {
       const ariaLabel = button.getAttribute('aria-label') || '';
       const text = button.textContent?.trim().toLowerCase() || '';
-      return text === 'message' || ariaLabel.toLowerCase().includes('message');
+
+      return text === 'message' ||
+             text.includes('message') ||
+             ariaLabel.toLowerCase().includes('message') ||
+             ariaLabel.toLowerCase().startsWith('message '); // "Message John Doe"
     });
 
     if (messageButton) {
-      console.log('✓ Already connected (Message button found)');
+      console.log('✓ Found Message button - already connected');
+      console.log('  Message button text:', messageButton.textContent?.trim());
+      console.log('  Message button aria-label:', messageButton.getAttribute('aria-label'));
       status.connected = true;
+      status.connectionRequestSent = true;
       return status;
     }
 
-    // Check for "Connect" button (not connected)
-    const connectButton = buttons.find(button => {
+    // Check for "Connect" button (not connected at all)
+    const connectButton = profileButtons.find(button => {
       const ariaLabel = button.getAttribute('aria-label') || '';
       const text = button.textContent?.trim().toLowerCase() || '';
       return ariaLabel.toLowerCase().includes('invite') ||
              ariaLabel.toLowerCase().includes('connect') ||
-             text === 'connect';
+             text === 'connect' ||
+             text.includes('connect');
     });
 
     if (connectButton) {
-      console.log('✓ Not connected (Connect button found)');
+      console.log('✓ Not connected (no request sent yet)');
       return status;
     }
 
-    console.log('⚠️ Could not determine connection status');
+    console.log('⚠️ Could not determine connection status - no indicators found');
   } catch (error) {
     console.error('❌ Error extracting connection status:', error);
   }
@@ -189,6 +325,13 @@ function extractProfileData(): ProfileData {
           if (containerText.includes('Present')) {
             // Found the current job entry
             // Now find the role and company within this specific container
+
+            // Extract company LinkedIn URL
+            const companyUrl = (companyLink as HTMLAnchorElement).href;
+            if (companyUrl && companyUrl.includes('linkedin.com/company')) {
+              profileData.companyLinkedInUrl = companyUrl;
+              console.log('✓ Company LinkedIn URL extracted:', companyUrl);
+            }
 
             // Look for paragraphs within the company link
             const linkParagraphs = Array.from(companyLink.querySelectorAll('p'));
@@ -467,5 +610,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     return true; // Keep channel open for async response
   }
+
+  if (request.action === 'extractBrandData') {
+    // Extract brand data from company page
+    const brandData = extractBrandData();
+    sendResponse(brandData);
+    return true;
+  }
+
   return true;
 });
