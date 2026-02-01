@@ -499,49 +499,95 @@ function extractProfileData(): ProfileData {
       }
 
       if (profileSection) {
-        // PRIORITY 1: Extract company from company button/logo (most reliable)
+        // PRIORITY 1: Extract company name from profile header (same as brand extraction)
         if (!profileData.company) {
-          console.log('Trying to extract company from company button/logo...');
+          console.log('Extracting company name from profile header...');
 
-          // Look for company button with aria-label
-          const companyButtons = Array.from(profileSection.querySelectorAll('button[aria-label*="company"], button[aria-label*="Company"]'));
+          // Method 1: Look for ALL text in spans/divs near company images/buttons
+          // This mirrors how brand extraction finds the company name on company pages
+          const allSpans = Array.from(profileSection.querySelectorAll('span, div'));
 
-          for (const button of companyButtons) {
-            const ariaLabel = button.getAttribute('aria-label') || '';
+          // Look for short text elements that could be company names (like "FORM")
+          // Similar to how we extract brand names from h1 on company pages
+          const companyNameCandidates = allSpans
+            .map(el => {
+              // Get visible text only (skip screen reader duplicates)
+              const classes = el.className || '';
+              if (classes.includes('visually-hidden') || el.getAttribute('aria-hidden') === 'true') {
+                return null;
+              }
 
-            // Extract company name from aria-label like "Current company: FORM..."
-            const match = ariaLabel.match(/(?:Current company|Company):\s*([^.]+)/i);
-            if (match && match[1]) {
-              const companyName = match[1].trim();
-              // Remove any trailing text after company name
-              const cleanCompanyName = companyName.split('.')[0].split(',')[0].trim();
-              profileData.company = cleanCompanyName;
-              console.log('✓ Company extracted from button aria-label:', profileData.company);
-              break;
-            }
+              // Get direct text content (not from children)
+              let text = '';
+              for (const node of el.childNodes) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                  text += node.textContent || '';
+                }
+              }
+              text = text.trim();
+
+              // Also try getting from first child if it's aria-hidden
+              if (!text) {
+                const ariaHiddenChild = el.querySelector('[aria-hidden="true"]');
+                if (ariaHiddenChild && el.querySelector('.visually-hidden')) {
+                  text = ariaHiddenChild.textContent?.trim() || '';
+                }
+              }
+
+              // Check if this could be a company name
+              // Company names are typically short (1-50 chars), no dates, and near top of profile
+              if (text &&
+                  text.length > 0 &&
+                  text.length < 50 &&
+                  !text.match(/\d{4}/) &&
+                  !text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i) &&
+                  !text.toLowerCase().includes('connection') &&
+                  !text.toLowerCase().includes('follower') &&
+                  !text.toLowerCase().includes('contact') &&
+                  !text.includes('·') &&
+                  !text.includes('|') &&
+                  text !== profileData.name &&
+                  text !== profileData.role) {
+
+                // Check if this element is near a company-related element
+                const parent = el.closest('button, a, li, div[class*="company"]');
+                if (parent) {
+                  const parentText = parent.textContent?.toLowerCase() || '';
+                  const parentClasses = parent.className?.toLowerCase() || '';
+                  const ariaLabel = parent.getAttribute('aria-label')?.toLowerCase() || '';
+
+                  if (parentText.includes('company') ||
+                      parentClasses.includes('company') ||
+                      ariaLabel.includes('company')) {
+                    return { text, element: el };
+                  }
+                }
+              }
+
+              return null;
+            })
+            .filter(item => item !== null);
+
+          console.log(`Found ${companyNameCandidates.length} company name candidates:`, companyNameCandidates.map(c => c?.text));
+
+          // Take the first valid candidate
+          if (companyNameCandidates.length > 0 && companyNameCandidates[0]) {
+            profileData.company = companyNameCandidates[0].text;
+            console.log('✓ Company name extracted (brand-style):', profileData.company);
           }
 
-          // Also try to get company from the text inside the button
+          // Method 2: Extract from button aria-label as backup
           if (!profileData.company) {
+            const companyButtons = Array.from(profileSection.querySelectorAll('button[aria-label*="company"], button[aria-label*="Company"]'));
+
             for (const button of companyButtons) {
-              // Look for inline-show-more-text div which contains company name
-              const companyDiv = button.querySelector('.inline-show-more-text, [class*="inline-show-more"]');
-              if (companyDiv) {
-                // Get visible text only
-                const ariaHiddenChild = companyDiv.querySelector('[aria-hidden="true"]');
-                let companyText = '';
-
-                if (ariaHiddenChild && companyDiv.querySelector('.visually-hidden')) {
-                  companyText = ariaHiddenChild.textContent?.trim() || '';
-                } else {
-                  companyText = companyDiv.textContent?.trim() || '';
-                }
-
-                if (companyText && companyText.length > 0 && companyText.length < 100) {
-                  profileData.company = companyText;
-                  console.log('✓ Company extracted from button content:', profileData.company);
-                  break;
-                }
+              const ariaLabel = button.getAttribute('aria-label') || '';
+              const match = ariaLabel.match(/(?:Current company|Company):\s*([^.]+)/i);
+              if (match && match[1]) {
+                const companyName = match[1].trim().split('.')[0].split(',')[0].trim();
+                profileData.company = companyName;
+                console.log('✓ Company extracted from aria-label:', profileData.company);
+                break;
               }
             }
           }
