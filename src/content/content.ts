@@ -486,7 +486,7 @@ function extractProfileData(): ProfileData {
       console.log('⚠️ Experience section not found');
     }
 
-    // Fallback: Try to get headline from profile header if no role found
+    // Fallback: Try to get role/company from profile header
     if (!profileData.role || !profileData.company) {
       console.log('Attempting to extract role/company from profile header...');
 
@@ -499,38 +499,81 @@ function extractProfileData(): ProfileData {
       }
 
       if (profileSection) {
-        // Look for divs with class "text-body-medium" which often contain the headline
-        const headlineDivs = Array.from(profileSection.querySelectorAll('div.text-body-medium'));
+        // PRIORITY 1: Extract company from company button/logo (most reliable)
+        if (!profileData.company) {
+          console.log('Trying to extract company from company button/logo...');
 
-        for (const div of headlineDivs) {
-          // Get only visible text, not screen-reader duplicates
-          let text = '';
+          // Look for company button with aria-label
+          const companyButtons = Array.from(profileSection.querySelectorAll('button[aria-label*="company"], button[aria-label*="Company"]'));
 
-          // Check if div has aria-hidden/visually-hidden pattern
-          const ariaHiddenChild = div.querySelector('[aria-hidden="true"]');
-          if (ariaHiddenChild && div.querySelector('.visually-hidden')) {
-            // Use only the aria-hidden (visible) text
-            text = ariaHiddenChild.textContent?.trim() || '';
-          } else {
-            text = div.textContent?.trim() || '';
+          for (const button of companyButtons) {
+            const ariaLabel = button.getAttribute('aria-label') || '';
+
+            // Extract company name from aria-label like "Current company: FORM..."
+            const match = ariaLabel.match(/(?:Current company|Company):\s*([^.]+)/i);
+            if (match && match[1]) {
+              const companyName = match[1].trim();
+              // Remove any trailing text after company name
+              const cleanCompanyName = companyName.split('.')[0].split(',')[0].trim();
+              profileData.company = cleanCompanyName;
+              console.log('✓ Company extracted from button aria-label:', profileData.company);
+              break;
+            }
           }
 
-          // Validate this looks like a headline (has role/company info)
-          if (text.length > 5 && text.length < 300 &&
-              !text.toLowerCase().includes('contact info') &&
-              !text.toLowerCase().includes('connections') &&
-              !text.toLowerCase().includes('followers')) {
+          // Also try to get company from the text inside the button
+          if (!profileData.company) {
+            for (const button of companyButtons) {
+              // Look for inline-show-more-text div which contains company name
+              const companyDiv = button.querySelector('.inline-show-more-text, [class*="inline-show-more"]');
+              if (companyDiv) {
+                // Get visible text only
+                const ariaHiddenChild = companyDiv.querySelector('[aria-hidden="true"]');
+                let companyText = '';
 
-            console.log('Found headline div:', text);
+                if (ariaHiddenChild && companyDiv.querySelector('.visually-hidden')) {
+                  companyText = ariaHiddenChild.textContent?.trim() || '';
+                } else {
+                  companyText = companyDiv.textContent?.trim() || '';
+                }
 
-            // Parse headline - common formats:
-            // "Role at Company"
-            // "Role, Company"
-            // "Role | Company | Other"
-            // "Co-Founder, FORM | Forbes 30 Under 30"
+                if (companyText && companyText.length > 0 && companyText.length < 100) {
+                  profileData.company = companyText;
+                  console.log('✓ Company extracted from button content:', profileData.company);
+                  break;
+                }
+              }
+            }
+          }
+        }
 
-            if (!profileData.role) {
-              // Try to extract role (everything before " at ", ",", or "|")
+        // PRIORITY 2: Extract role from headline div
+        if (!profileData.role) {
+          // Look for divs with class "text-body-medium" which often contain the headline
+          const headlineDivs = Array.from(profileSection.querySelectorAll('div.text-body-medium'));
+
+          for (const div of headlineDivs) {
+            // Get only visible text, not screen-reader duplicates
+            let text = '';
+
+            // Check if div has aria-hidden/visually-hidden pattern
+            const ariaHiddenChild = div.querySelector('[aria-hidden="true"]');
+            if (ariaHiddenChild && div.querySelector('.visually-hidden')) {
+              // Use only the aria-hidden (visible) text
+              text = ariaHiddenChild.textContent?.trim() || '';
+            } else {
+              text = div.textContent?.trim() || '';
+            }
+
+            // Validate this looks like a headline (has role/company info)
+            if (text.length > 5 && text.length < 300 &&
+                !text.toLowerCase().includes('contact info') &&
+                !text.toLowerCase().includes('connections') &&
+                !text.toLowerCase().includes('followers')) {
+
+              console.log('Found headline div:', text);
+
+              // Extract role (everything before " at ", ",", or "|")
               let role = text;
 
               if (text.includes(' at ')) {
@@ -544,11 +587,46 @@ function extractProfileData(): ProfileData {
               if (role && role.length > 2) {
                 profileData.role = role;
                 console.log('✓ Role extracted from headline:', role);
+                break;
               }
             }
+          }
 
-            if (!profileData.company) {
-              // Try to extract company name
+          // Alternative: Try paragraphs if divs didn't work
+          if (!profileData.role) {
+            const paragraphs = Array.from(profileSection.querySelectorAll('p'));
+            const headlineCandidate = paragraphs.find(p => {
+              const text = p.textContent?.trim() || '';
+              return text.length > 10 &&
+                     text.length < 300 &&
+                     !text.startsWith('·') &&
+                     !text.toLowerCase().includes('contact info') &&
+                     !text.toLowerCase().includes('connections');
+            });
+
+            if (headlineCandidate) {
+              const headlineText = headlineCandidate.textContent?.trim() || '';
+              profileData.role = headlineText;
+              console.log('✓ Role extracted from <p> headline:', headlineText);
+            }
+          }
+        }
+
+        // PRIORITY 3: If still no company, try parsing from headline as last resort
+        if (!profileData.company) {
+          const headlineDivs = Array.from(profileSection.querySelectorAll('div.text-body-medium'));
+
+          for (const div of headlineDivs) {
+            let text = '';
+            const ariaHiddenChild = div.querySelector('[aria-hidden="true"]');
+            if (ariaHiddenChild && div.querySelector('.visually-hidden')) {
+              text = ariaHiddenChild.textContent?.trim() || '';
+            } else {
+              text = div.textContent?.trim() || '';
+            }
+
+            if (text.length > 5 && text.length < 300) {
+              // Try to extract company name from headline patterns
               let company = '';
 
               if (text.includes(' at ')) {
@@ -559,85 +637,26 @@ function extractProfileData(): ProfileData {
               } else if (text.includes(',')) {
                 const parts = text.split(',');
                 if (parts[1]) {
-                  // Second part might be company
                   const secondPart = parts[1].trim();
-                  // Check if it looks like a company (not a credential or other info)
-                  if (!secondPart.match(/\d{4}/) && secondPart.length < 50) {
+                  // Make sure it's not the same as the role and looks like a company
+                  if (!secondPart.match(/\d{4}/) && secondPart.length < 50 && secondPart !== profileData.role) {
                     company = secondPart.split('|')[0].trim();
                   }
                 }
               }
 
-              if (company && company.length > 1) {
+              if (company && company.length > 1 && company !== profileData.role) {
                 profileData.company = company;
-                console.log('✓ Company extracted from headline:', company);
+                console.log('✓ Company extracted from headline parsing:', company);
+                break;
               }
             }
-
-            // If we found what we need, stop
-            if (profileData.role && profileData.company) {
-              break;
-            }
-          }
-        }
-
-        // Alternative: Try paragraphs if divs didn't work
-        if (!profileData.role) {
-          const paragraphs = Array.from(profileSection.querySelectorAll('p'));
-          const headlineCandidate = paragraphs.find(p => {
-            const text = p.textContent?.trim() || '';
-            return text.length > 10 &&
-                   text.length < 300 &&
-                   !text.startsWith('·') &&
-                   !text.toLowerCase().includes('contact info') &&
-                   !text.toLowerCase().includes('connections');
-          });
-
-          if (headlineCandidate) {
-            const headlineText = headlineCandidate.textContent?.trim() || '';
-            profileData.role = headlineText;
-            console.log('✓ Role extracted from <p> headline:', headlineText);
           }
         }
       }
     }
 
-    // Final fallback: Try to get company from the company button/logo in profile header
-    if (!profileData.company) {
-      console.log('Attempting to extract company from profile header company button...');
-
-      // Look for company button or logo in the profile header
-      const companyButtons = Array.from(document.querySelectorAll('button[aria-label*="company"], button[aria-label*="Company"]'));
-
-      for (const button of companyButtons) {
-        const ariaLabel = button.getAttribute('aria-label') || '';
-
-        // Extract company name from aria-label like "Current company: FORM..."
-        const match = ariaLabel.match(/(?:Current company|Company):\s*([^.]+)/i);
-        if (match && match[1]) {
-          profileData.company = match[1].trim();
-          console.log('✓ Company extracted from button aria-label:', profileData.company);
-          break;
-        }
-      }
-
-      // Also try looking for company name in spans near company logo
-      if (!profileData.company) {
-        const companySpans = Array.from(document.querySelectorAll('span.text-body-small'));
-
-        for (const span of companySpans) {
-          const parent = span.closest('li, div');
-          if (parent && parent.textContent?.includes('company')) {
-            const text = span.textContent?.trim() || '';
-            if (text.length > 1 && text.length < 100 && !text.includes('·')) {
-              profileData.company = text;
-              console.log('✓ Company extracted from company span:', text);
-              break;
-            }
-          }
-        }
-      }
-    }
+    // This section has been moved up to Priority 1 in the profile header extraction
 
     // Extract connection status
     const connectionStatus = extractConnectionStatus();
