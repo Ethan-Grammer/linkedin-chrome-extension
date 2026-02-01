@@ -297,7 +297,19 @@ function extractProfileData(): ProfileData {
     });
 
     if (nameElement) {
-      profileData.name = nameElement.textContent?.trim() || '';
+      // Get only visible text, not screen-reader duplicates
+      let name = '';
+
+      // Check if nameElement has aria-hidden/visually-hidden pattern
+      const ariaHiddenChild = nameElement.querySelector('[aria-hidden="true"]');
+      if (ariaHiddenChild && nameElement.querySelector('.visually-hidden')) {
+        // Use only the aria-hidden (visible) text
+        name = ariaHiddenChild.textContent?.trim() || '';
+      } else {
+        name = nameElement.textContent?.trim() || '';
+      }
+
+      profileData.name = name;
       console.log('✓ Name extracted:', profileData.name);
     } else {
       console.log('❌ Name not found');
@@ -389,7 +401,14 @@ function extractProfileData(): ProfileData {
               console.log('Trying alternative span-based extraction...');
 
               // Find all spans and divs within the link that might contain role/company
-              const allSpans = Array.from(companyLink.querySelectorAll('span, div'));
+              // Filter out screen reader duplicates (visually-hidden class)
+              const allSpans = Array.from(companyLink.querySelectorAll('span, div')).filter(el => {
+                const classes = el.className || '';
+                // Skip visually-hidden elements (screen reader only) and aria-hidden elements
+                return !classes.includes('visually-hidden') &&
+                       !classes.includes('accessibility-text') &&
+                       el.getAttribute('aria-hidden') !== 'true';
+              });
 
               for (const span of allSpans) {
                 const text = span.textContent?.trim() || '';
@@ -397,14 +416,30 @@ function extractProfileData(): ProfileData {
                 // Skip if already found both
                 if (profileData.role && profileData.company) break;
 
+                // Skip if this span contains child elements with duplicated text
+                // (LinkedIn often wraps text in nested spans)
+                const childSpans = span.querySelectorAll('span');
+                const hasVisuallyHiddenChild = Array.from(childSpans).some(child =>
+                  child.className.includes('visually-hidden')
+                );
+
+                // If it has a visually-hidden child, get text from aria-hidden span only
+                let displayText = text;
+                if (hasVisuallyHiddenChild) {
+                  const ariaHiddenSpan = span.querySelector('[aria-hidden="true"]');
+                  if (ariaHiddenSpan) {
+                    displayText = ariaHiddenSpan.textContent?.trim() || '';
+                  }
+                }
+
                 // Check if this looks like a role (not a date, not too long, contains meaningful text)
-                if (!profileData.role && text.length > 2 && text.length < 100 &&
-                    !text.match(/\d{4}/) &&
-                    !text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i) &&
-                    !text.includes('Present') &&
-                    !text.includes('·') &&
-                    !text.includes('Full-time') &&
-                    !text.includes('Part-time')) {
+                if (!profileData.role && displayText.length > 2 && displayText.length < 100 &&
+                    !displayText.match(/\d{4}/) &&
+                    !displayText.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i) &&
+                    !displayText.includes('Present') &&
+                    !displayText.includes('·') &&
+                    !displayText.includes('Full-time') &&
+                    !displayText.includes('Part-time')) {
 
                   // Check if this span has a bold class (roles are often bold)
                   const hasBoldClass = span.className.includes('bold') ||
@@ -412,19 +447,19 @@ function extractProfileData(): ProfileData {
                                       span.closest('[class*="bold"]');
 
                   if (hasBoldClass) {
-                    profileData.role = text;
-                    console.log('✓ Role extracted from <span> tag:', text);
+                    profileData.role = displayText;
+                    console.log('✓ Role extracted from <span> tag:', displayText);
                   }
                 }
 
                 // Check if this looks like a company name
-                if (!profileData.company && text.length > 1 && text.length < 100 &&
-                    !text.match(/\d{4}/) &&
-                    !text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i) &&
-                    !text.includes('Present')) {
+                if (!profileData.company && displayText.length > 1 && displayText.length < 100 &&
+                    !displayText.match(/\d{4}/) &&
+                    !displayText.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i) &&
+                    !displayText.includes('Present')) {
 
                   // Extract company name (before "·" if present)
-                  const companyParts = text.split('·');
+                  const companyParts = displayText.split('·');
                   const potentialCompany = companyParts[0].trim();
 
                   if (potentialCompany && potentialCompany !== profileData.role) {
@@ -468,7 +503,17 @@ function extractProfileData(): ProfileData {
         const headlineDivs = Array.from(profileSection.querySelectorAll('div.text-body-medium'));
 
         for (const div of headlineDivs) {
-          const text = div.textContent?.trim() || '';
+          // Get only visible text, not screen-reader duplicates
+          let text = '';
+
+          // Check if div has aria-hidden/visually-hidden pattern
+          const ariaHiddenChild = div.querySelector('[aria-hidden="true"]');
+          if (ariaHiddenChild && div.querySelector('.visually-hidden')) {
+            // Use only the aria-hidden (visible) text
+            text = ariaHiddenChild.textContent?.trim() || '';
+          } else {
+            text = div.textContent?.trim() || '';
+          }
 
           // Validate this looks like a headline (has role/company info)
           if (text.length > 5 && text.length < 300 &&
