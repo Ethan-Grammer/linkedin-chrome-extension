@@ -305,11 +305,33 @@ function extractProfileData(): ProfileData {
 
     // Extract Role and Company from Experience Section
     // Look for the current job (one with "Present" in the date)
-    const experienceSection = document.querySelector('[data-view-name="profile-card-experience"]');
+    // Try multiple selectors to handle different LinkedIn HTML structures
+    let experienceSection = document.querySelector('[data-view-name="profile-card-experience"]');
+
+    // Fallback: Try to find section by the experience anchor ID
+    if (!experienceSection) {
+      const experienceAnchor = document.getElementById('experience');
+      if (experienceAnchor) {
+        experienceSection = experienceAnchor.closest('section');
+      }
+    }
+
+    // Fallback: Find section containing the "Experience" heading
+    if (!experienceSection) {
+      const headings = Array.from(document.querySelectorAll('h2'));
+      const expHeading = headings.find(h => h.textContent?.trim() === 'Experience');
+      if (expHeading) {
+        experienceSection = expHeading.closest('section');
+      }
+    }
 
     if (experienceSection) {
-      // Find all links in the experience section
+      console.log('✓ Found experience section');
+
+      // Find all company links in the experience section
+      // Handle both text-based and numeric ID company URLs
       const allLinks = Array.from(experienceSection.querySelectorAll('a[href*="linkedin.com/company"]'));
+      console.log(`Found ${allLinks.length} company links in experience section`);
 
       // Search for the experience entry with "Present"
       for (const companyLink of allLinks) {
@@ -323,8 +345,7 @@ function extractProfileData(): ProfileData {
 
           // Check if this container has "Present" indicating current job
           if (containerText.includes('Present')) {
-            // Found the current job entry
-            // Now find the role and company within this specific container
+            console.log('✓ Found current job with "Present"');
 
             // Extract company LinkedIn URL
             const companyUrl = (companyLink as HTMLAnchorElement).href;
@@ -333,7 +354,7 @@ function extractProfileData(): ProfileData {
               console.log('✓ Company LinkedIn URL extracted:', companyUrl);
             }
 
-            // Look for paragraphs within the company link
+            // Method 1: Look for paragraphs within the company link (original structure)
             const linkParagraphs = Array.from(companyLink.querySelectorAll('p'));
 
             if (linkParagraphs.length >= 2) {
@@ -348,6 +369,7 @@ function extractProfileData(): ProfileData {
                   !roleText.match(/\d{4}/) &&
                   !roleText.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i)) {
                 profileData.role = roleText;
+                console.log('✓ Role extracted from <p> tag:', roleText);
               }
 
               // Second p tag is typically the company
@@ -358,6 +380,58 @@ function extractProfileData(): ProfileData {
                 // Extract company name (before "·" if present)
                 const companyParts = companyText.split('·');
                 profileData.company = companyParts[0].trim();
+                console.log('✓ Company extracted from <p> tag:', profileData.company);
+              }
+            }
+
+            // Method 2: Look for spans with role/company (alternative structure)
+            if (!profileData.role || !profileData.company) {
+              console.log('Trying alternative span-based extraction...');
+
+              // Find all spans and divs within the link that might contain role/company
+              const allSpans = Array.from(companyLink.querySelectorAll('span, div'));
+
+              for (const span of allSpans) {
+                const text = span.textContent?.trim() || '';
+
+                // Skip if already found both
+                if (profileData.role && profileData.company) break;
+
+                // Check if this looks like a role (not a date, not too long, contains meaningful text)
+                if (!profileData.role && text.length > 2 && text.length < 100 &&
+                    !text.match(/\d{4}/) &&
+                    !text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i) &&
+                    !text.includes('Present') &&
+                    !text.includes('·') &&
+                    !text.includes('Full-time') &&
+                    !text.includes('Part-time')) {
+
+                  // Check if this span has a bold class (roles are often bold)
+                  const hasBoldClass = span.className.includes('bold') ||
+                                      span.className.includes('t-bold') ||
+                                      span.closest('[class*="bold"]');
+
+                  if (hasBoldClass) {
+                    profileData.role = text;
+                    console.log('✓ Role extracted from <span> tag:', text);
+                  }
+                }
+
+                // Check if this looks like a company name
+                if (!profileData.company && text.length > 1 && text.length < 100 &&
+                    !text.match(/\d{4}/) &&
+                    !text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i) &&
+                    !text.includes('Present')) {
+
+                  // Extract company name (before "·" if present)
+                  const companyParts = text.split('·');
+                  const potentialCompany = companyParts[0].trim();
+
+                  if (potentialCompany && potentialCompany !== profileData.role) {
+                    profileData.company = potentialCompany;
+                    console.log('✓ Company extracted from <span> tag:', potentialCompany);
+                  }
+                }
               }
             }
 
@@ -373,24 +447,149 @@ function extractProfileData(): ProfileData {
           break;
         }
       }
+    } else {
+      console.log('⚠️ Experience section not found');
     }
 
     // Fallback: Try to get headline from profile header if no role found
-    if (!profileData.role) {
-      const profileSection = document.querySelector('[data-view-name*="profile-top-card"]');
-      if (profileSection) {
-        const paragraphs = Array.from(profileSection.querySelectorAll('p'));
-        const headlineCandidate = paragraphs.find(p => {
-          const text = p.textContent?.trim() || '';
-          return text.length > 10 &&
-                 text.length < 300 &&
-                 !text.startsWith('·') &&
-                 !text.toLowerCase().includes('contact info') &&
-                 !text.toLowerCase().includes('connections');
-        });
+    if (!profileData.role || !profileData.company) {
+      console.log('Attempting to extract role/company from profile header...');
 
-        if (headlineCandidate) {
-          profileData.role = headlineCandidate.textContent?.trim() || '';
+      // Try multiple selectors for the profile header
+      let profileSection = document.querySelector('[data-view-name*="profile-top-card"]');
+
+      if (!profileSection) {
+        // Alternative: look for the main section or section with profile data
+        profileSection = document.querySelector('main section');
+      }
+
+      if (profileSection) {
+        // Look for divs with class "text-body-medium" which often contain the headline
+        const headlineDivs = Array.from(profileSection.querySelectorAll('div.text-body-medium'));
+
+        for (const div of headlineDivs) {
+          const text = div.textContent?.trim() || '';
+
+          // Validate this looks like a headline (has role/company info)
+          if (text.length > 5 && text.length < 300 &&
+              !text.toLowerCase().includes('contact info') &&
+              !text.toLowerCase().includes('connections') &&
+              !text.toLowerCase().includes('followers')) {
+
+            console.log('Found headline div:', text);
+
+            // Parse headline - common formats:
+            // "Role at Company"
+            // "Role, Company"
+            // "Role | Company | Other"
+            // "Co-Founder, FORM | Forbes 30 Under 30"
+
+            if (!profileData.role) {
+              // Try to extract role (everything before " at ", ",", or "|")
+              let role = text;
+
+              if (text.includes(' at ')) {
+                role = text.split(' at ')[0].trim();
+              } else if (text.includes(',')) {
+                role = text.split(',')[0].trim();
+              } else if (text.includes('|')) {
+                role = text.split('|')[0].trim();
+              }
+
+              if (role && role.length > 2) {
+                profileData.role = role;
+                console.log('✓ Role extracted from headline:', role);
+              }
+            }
+
+            if (!profileData.company) {
+              // Try to extract company name
+              let company = '';
+
+              if (text.includes(' at ')) {
+                const parts = text.split(' at ');
+                if (parts[1]) {
+                  company = parts[1].split('|')[0].split(',')[0].trim();
+                }
+              } else if (text.includes(',')) {
+                const parts = text.split(',');
+                if (parts[1]) {
+                  // Second part might be company
+                  const secondPart = parts[1].trim();
+                  // Check if it looks like a company (not a credential or other info)
+                  if (!secondPart.match(/\d{4}/) && secondPart.length < 50) {
+                    company = secondPart.split('|')[0].trim();
+                  }
+                }
+              }
+
+              if (company && company.length > 1) {
+                profileData.company = company;
+                console.log('✓ Company extracted from headline:', company);
+              }
+            }
+
+            // If we found what we need, stop
+            if (profileData.role && profileData.company) {
+              break;
+            }
+          }
+        }
+
+        // Alternative: Try paragraphs if divs didn't work
+        if (!profileData.role) {
+          const paragraphs = Array.from(profileSection.querySelectorAll('p'));
+          const headlineCandidate = paragraphs.find(p => {
+            const text = p.textContent?.trim() || '';
+            return text.length > 10 &&
+                   text.length < 300 &&
+                   !text.startsWith('·') &&
+                   !text.toLowerCase().includes('contact info') &&
+                   !text.toLowerCase().includes('connections');
+          });
+
+          if (headlineCandidate) {
+            const headlineText = headlineCandidate.textContent?.trim() || '';
+            profileData.role = headlineText;
+            console.log('✓ Role extracted from <p> headline:', headlineText);
+          }
+        }
+      }
+    }
+
+    // Final fallback: Try to get company from the company button/logo in profile header
+    if (!profileData.company) {
+      console.log('Attempting to extract company from profile header company button...');
+
+      // Look for company button or logo in the profile header
+      const companyButtons = Array.from(document.querySelectorAll('button[aria-label*="company"], button[aria-label*="Company"]'));
+
+      for (const button of companyButtons) {
+        const ariaLabel = button.getAttribute('aria-label') || '';
+
+        // Extract company name from aria-label like "Current company: FORM..."
+        const match = ariaLabel.match(/(?:Current company|Company):\s*([^.]+)/i);
+        if (match && match[1]) {
+          profileData.company = match[1].trim();
+          console.log('✓ Company extracted from button aria-label:', profileData.company);
+          break;
+        }
+      }
+
+      // Also try looking for company name in spans near company logo
+      if (!profileData.company) {
+        const companySpans = Array.from(document.querySelectorAll('span.text-body-small'));
+
+        for (const span of companySpans) {
+          const parent = span.closest('li, div');
+          if (parent && parent.textContent?.includes('company')) {
+            const text = span.textContent?.trim() || '';
+            if (text.length > 1 && text.length < 100 && !text.includes('·')) {
+              profileData.company = text;
+              console.log('✓ Company extracted from company span:', text);
+              break;
+            }
+          }
         }
       }
     }
@@ -400,7 +599,15 @@ function extractProfileData(): ProfileData {
     profileData.connected = connectionStatus.connected;
     profileData.connectionRequestSent = connectionStatus.connectionRequestSent;
 
-    console.log('Extracted profile data:', profileData);
+    console.log('=== Final Extracted Profile Data ===');
+    console.log('Name:', profileData.name || '❌ NOT FOUND');
+    console.log('Role:', profileData.role || '❌ NOT FOUND');
+    console.log('Company:', profileData.company || '❌ NOT FOUND');
+    console.log('LinkedIn URL:', profileData.linkedinUrl);
+    console.log('Company LinkedIn URL:', profileData.companyLinkedInUrl || 'Not found');
+    console.log('Connected:', profileData.connected);
+    console.log('Connection Request Sent:', profileData.connectionRequestSent);
+    console.log('===================================');
   } catch (error) {
     console.error('Error extracting profile data:', error);
   }
