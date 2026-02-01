@@ -35,6 +35,27 @@ function Popup() {
     extractProfileData();
   }, []);
 
+  // Verify and sync Company with Brand Name when brand data is available
+  useEffect(() => {
+    if (brandData && brandData.brandName) {
+      // Check if Company matches Brand Name
+      if (profileData.company !== brandData.brandName) {
+        console.log('Company mismatch detected:');
+        console.log('  Current Company:', profileData.company);
+        console.log('  Brand Name:', brandData.brandName);
+        console.log('  -> Syncing Company to match Brand Name');
+
+        // Automatically update Company to match Brand Name
+        setProfileData(prev => ({
+          ...prev,
+          company: brandData.brandName
+        }));
+
+        setStatus('Company name synced with Brand Name ✓');
+      }
+    }
+  }, [brandData]);
+
   const extractProfileData = async () => {
     try {
       setLoading(true);
